@@ -35,6 +35,8 @@
 #elif defined(__AVR_ATmega8__) || defined(__AVR_ATmega88__)
 #define RAMSTART (0x100)
 #define NRWWSTART (0x1800)
+#elif defined (__AVR_ATmega32__)
+#define BOOTSTART (0x3800)
 #endif
 
 
