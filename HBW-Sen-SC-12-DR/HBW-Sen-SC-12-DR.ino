@@ -8,7 +8,7 @@
 // Hiermit bedanke ich mich bei Thorsten und loetmeister für die hervorragende Arbeit mit HomeBrewWired und das Tutorial.
 //
 // Homematic Wired Hombrew Hardware
-// Arduino NANO als Homematic-Device
+// Arduino NANO oder ATmega32 als Homematic-Device
 // 12 digitale Eingänge (Key/Taster & Sensor) & Sensorkontakte
 // Diese Arbeit basiert sich auf HBW-SC-10-Dim-6 und wurde mit Hilfe von loetmeister und 
 // Tutorial und Hilfe von Thorsten (Mamber FHEM Forum "Thorsten Pferdekaemper")
@@ -32,6 +32,8 @@
 /* Undefine "HBW_DEBUG" in 'HBWired.h' to remove code not needed. "HBW_DEBUG" also works as master switch,
  * as hbwdebug() or hbwdebughex() used in channels will point to empty functions. */
 
+#define ATmega32
+
 
 // HB Wired protocol and module
 #include <HBWired.h>
@@ -39,6 +41,27 @@
 #include <HBWKey.h>
 #include <HBWSenSC.h>
 
+#ifdef ATmega32
+// Pins Bobuino Pinout
+  #define IO1 A0
+  #define IO2 A1
+  #define IO3 A2
+  #define IO4 A3
+  #define IO5 A4
+  #define IO6 A5
+  #define IO7 A6
+  #define IO8 A7
+  #define IO9 4
+  #define IO10 5
+  #define IO11 6
+  #define IO12 7
+
+  #define LED 2        // Signal-LED
+
+  #define RS485_TXEN 30  // Transmit-Enable
+  #define BUTTON 13  // Button fuer Factory-Reset etc.
+
+#else
 
 // Pins
   #define IO1 A3
@@ -54,9 +77,12 @@
   #define IO11 6
   #define IO12 5
 
+  #define LED LED_BUILTIN        // Signal-LED
+#endif
+
 #ifdef USE_HARDWARE_SERIAL
-  #define RS485_TXEN 2  // Transmit-Enable
-  #define BUTTON A6  // Button fuer Factory-Reset etc.
+  #define RS485_TXEN 12  // Transmit-Enable
+  #define BUTTON 7  // Button fuer Factory-Reset etc.
   
 #else
   #define RS485_RXD 4
@@ -64,12 +90,13 @@
   #define RS485_TXEN 3  // Transmit-Enable
   #define BUTTON 8  // Button fuer Factory-Reset etc.
   
+  
   #include "FreeRam.h"
   #include <HBWSoftwareSerial.h>
   HBWSoftwareSerial rs485(RS485_RXD, RS485_TXD); // RX, TX
 #endif
 
-#define LED LED_BUILTIN        // Signal-LED
+
 
 #define NUMBER_OF_CHAN NUMBER_OF_INPUT_CHAN + NUMBER_OF_SEN_INPUT_CHAN
 
@@ -100,7 +127,7 @@ void setup()
 
   // input sensor and key channels
   for(uint8_t i = 0; i < NUMBER_OF_SEN_INPUT_CHAN; i++) {
-    channels[i] = new HBWSenSC(digitalInput[i], &(hbwconfig.senCfg[i]), true);
+    channels[i] = new HBWSenSC(digitalInput[i], &(hbwconfig.senCfg[i]));
     channels[i + NUMBER_OF_SEN_INPUT_CHAN] = new HBWKey(digitalInput[i], &(hbwconfig.keyCfg[i]));
   };
 #else
@@ -142,5 +169,5 @@ void setup()
 void loop()
 {
   device->loop();
-  POWERSAVE();  // go sleep a bit
+//  POWERSAVE();  // go sleep a bit
 };
