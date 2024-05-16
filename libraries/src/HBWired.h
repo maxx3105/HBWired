@@ -1,8 +1,12 @@
 /*
  * HBWired.h
  *
+ * Some modifications and extensions on 10.01.2017 by Bernhard Nerz
+ *
  *  Created on: 19.11.2016
  *      Author: Thorsten Pferdekaemper
+ *
+ * Last updated: 16.05.2024
  */
 
 #ifndef HBWired_h
@@ -181,6 +185,15 @@ class HBWDevice {
     void handleBroadcastAnnounce();
     void handleAfterReadConfig();
     void handleResetSystem();
+    void processDiscoveryFrame(uint8_t frameControlByte);
+	
+  	uint32_t senderAddress;                   // Senderadresse beim Empfangen
+
+  	// Senden
+  	uint32_t txTargetAddress;                 // Adresse des Moduls, zu dem gesendet wird
+	  uint8_t txFrameControlByte;
+    uint8_t txFrameDataLength;                // Laenge der Daten + Checksum
+	  uint8_t txFrameData[MAX_RX_FRAME_LENGTH];
 	
 	// the broadcast methods return...
 	// 0 -> everything ok
