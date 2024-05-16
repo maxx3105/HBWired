@@ -1,13 +1,15 @@
 /*
  * HBWired.cpp
  *
+ *  Some modifications and extensions on 10.01.2017 by Bernhard Nerz
+ *
  *  Created on: 19.11.2016
  *      Author: Thorsten Pferdekaemper thorsten@pferdekaemper.com
  *      Nach einer Vorlage von Dirk Hoffmann (dirk@hfma.de) 2012
  *
  *  HomeBrew-Wired RS485-Protokoll 
  *
- * Last updated: 21.01.2019
+ * Last updated: 16.05.2024
  */
 
 #include "HBWired.h"
@@ -55,6 +57,35 @@ uint32_t HBWDevice::getOwnAddress() {
 }
 
 
+/*****************************************************************************
+* HBWDevice::processDiscoveryFrame(uint8_t frameControlByte)
+******************************************************************************/
+
+void HBWDevice::processDiscoveryFrame(uint8_t frameControlByte){
+
+  uint32_t  bitMask = 0x80000000;
+  uint8_t   bitCount;
+
+  bitCount = (frameControlByte >> 3) & 0x1f;
+  for(byte i = 0; i < bitCount; i++){
+    bitMask = (bitMask >> 1) | 0x80000000;
+  }
+
+  /* for debugging
+  hbwdebug(F("  Dis: ")); hmwdebug(bitCount,DEC); 
+  hbwdebug(F("  ")); hmwdebug(bitMask,HEX); 
+  hbwdebug(F("  ")); hmwdebug(targetAddress, HEX);
+  */
+
+  // as it turns out by try aned error the following code sequence should be executed without any delay   
+  if((ownAddress & bitMask) == (targetAddress & bitMask)){
+    digitalWrite(txEnablePin, HIGH);
+    serial->write(0xf8);          // just write a F8
+    serial->flush();   
+    digitalWrite(txEnablePin, LOW);
+    hbwdebug(F("\r\n")); hbwdebugtime(); hbwdebug(F(" D: ")); hbwdebughex(0xf8);
+  }
+}
 boolean HBWDevice::parseFrame () { // returns true, if event needs to be processed by the module
 // Wird aufgerufen, wenn eine komplette Nachricht empfangen wurde
 
@@ -81,6 +112,13 @@ boolean HBWDevice::parseFrame () { // returns true, if event needs to be process
 
 // Nur ein ACK
   if((frameControlByte & 0x03) == 1) return false;
+
+  // Discovery frame?
+  if(((frameControlByte & 0x03) == 3) && discoveryMode){
+    processDiscoveryFrame(frameControlByte);
+    return(false);
+  }
+
 // Leere Message und kein Broadcast? -> Ein ACK senden koennen wir selbst
   if(frameDataLength == 0 && targetAddress != 0xFFFFFFFF) {
     txFrame.targetAddress = senderAddress;
@@ -337,10 +375,10 @@ void HBWDevice::receive(){
         	senderAddress <<= 8;
         	senderAddress |= rxByte;
             addressPointer++;
-         }else if(addressPointer != 0xFF) { // Datenlänge empfangen
+         }else if(addressPointer != 0xFF) { // DatenlÃ¤nge empfangen
             addressPointer = 0xFF;
             frameDataLength = rxByte;
-            if(frameDataLength > MAX_RX_FRAME_LENGTH) // Maximale Puffergöße checken.
+            if(frameDataLength > MAX_RX_FRAME_LENGTH) // Maximale PuffergÃ¶ÃŸe checken.
             {
                 frameStatus &= ~FRAME_START;
                 hbwdebug(F("E: MsgTooLong\n"));
@@ -351,7 +389,7 @@ void HBWDevice::receive(){
             if(framePointer == frameDataLength) {  // Daten komplett
                if(crc16checksum == 0) {    //
             	  frameStatus &= ~FRAME_START;
-                  // Framedaten für die spätere Verarbeitung speichern
+                  // Framedaten fÃ¼r die spÃ¤tere Verarbeitung speichern
                   // TODO: Braucht man das wirklich?
                   frameControlByte = rxFrameControlByte;
                   frameDataLength -= 2;
@@ -441,7 +479,7 @@ void HBWDevice::processEvent(byte const * const frameData, byte frameDataLength,
             pendingActions.zeroCommunicationActive = true;
             break;
           // case 'K':  // 0x4B Key-Event
-            // broadcast key events sind für long_press interressant
+            // broadcast key events sind fÃ¼r long_press interressant
             //  if (frameDataLength == 4) {...}
 			// if (frameData[3] & 0x01) {    // long press broadcast only
               // receiveKeyEvent(senderAddress, frameData[1], frameData[2], frameData[3] >>2, true);
@@ -501,7 +539,7 @@ void HBWDevice::processEvent(byte const * const frameData, byte frameDataLength,
         	processEmessage(frameData);
             break;
          case 'K':                           // 0x4B Key-Event
-         case 0xCB:   // 'Ë':       // Key-Sim-Event TODO: Es gibt da einen theoretischen Unterschied
+         case 0xCB:   // 'Ã‹':       // Key-Sim-Event TODO: Es gibt da einen theoretischen Unterschied
             receiveKeyEvent(senderAddress, frameData[1], frameData[2], frameData[3] >>2, frameData[3] & 0x01);
             break;
          case 'R':                                                              // Read EEPROM
@@ -530,7 +568,7 @@ void HBWDevice::processEvent(byte const * const frameData, byte frameDataLength,
                }
             };
             break;
-         /* case 'c':                                                               // Zieladresse löschen?
+         /* case 'c':                                                               // Zieladresse lÃ¶schen?
             // TODO: ???
             break;  */
        #ifdef Support_HBWLink_InfoEvent
@@ -554,7 +592,7 @@ void HBWDevice::processEvent(byte const * const frameData, byte frameDataLength,
         	txFrame.dataLength = 10;
         	onlyAck = false;
         	break;
-         /* case 'q':                                                               // Zieladresse hinzufügen?
+         /* case 'q':                                                               // Zieladresse hinzufÃ¼gen?
             // TODO: ???
         	break; */
          case 'v':                                                               // get firmware version
@@ -1003,7 +1041,7 @@ void HBWDevice::loop()
    #ifdef Support_WDT
    wdt_reset();
    #endif
-  // Daten empfangen und alles, was zur Kommunikationsschicht gehört
+  // Daten empfangen und alles, was zur Kommunikationsschicht gehÃ¶rt
   // processEvent vom Modul wird als Callback aufgerufen
   // Daten empfangen (tut nichts, wenn keine Daten vorhanden)
     receive();
