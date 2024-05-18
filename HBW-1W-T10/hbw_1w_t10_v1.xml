@@ -67,7 +67,7 @@
 					<value_map to_device="false" from_device="true" parameter_value="5" device_value="0xff"/>
 				</conversion>
 			</parameter>
-			<parameter id="OFFSET">
+			<parameter id="TEMPERATURE_OFFSET">
 				<logical type="integer" min="-127" max="127" unit="&#x2103;"/>
 				<physical type="integer" size="1" interface="eeprom">
 					<address index="+1.0"/>
