@@ -1,4 +1,4 @@
-<device version="1" eep_size="256">
+<device version="1" eep_size="1024">
 <supported_types>
 	<type name="RS485 RGB-LED actuator 1-channel" id="HBW-LC-RGB1-CV" priority="2">
 		<parameter index="0" size="1" const_value="160"/>
