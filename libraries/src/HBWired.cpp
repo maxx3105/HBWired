@@ -7,7 +7,7 @@
  *
  *  HomeBrew-Wired RS485-Protokoll 
  *
- * Last updated: 21.01.2019
+ * Last updated: 04.02.2026
  */
 
 #include "HBWired.h"
@@ -331,15 +331,20 @@ void HBWDevice::receive(){
          }else if(addressPointer == ADDRESSLENGTH){   // Controlbyte empfangen
             addressPointer++;
             rxFrameControlByte = rxByte;
-         }else if( bitRead(rxFrameControlByte,3) && addressPointer < ADDRESSLENGTHLONG) {
+         }else if( bitRead(rxFrameControlByte,3) && 
+                   ((rxFrameControlByte & 0x03) != 0x03) &&
+                   addressPointer < ADDRESSLENGTHLONG) {
         	// Adressbyte Sender empfangen wenn CTRL_HAS_SENDER und FRAME_START_LONG
+        	// NEU (OpenCCU): Bei Discovery-Frames (Bits 1,0 = 11) wird Bit 3
+        	// als Teil von validBits verwendet - NICHT als HasSender-Flag!
+        	// Siehe FHEM HM485_Protocol.pm: CTRL = (validBits-1) << 3 | 0x03
         	senderAddress <<= 8;
         	senderAddress |= rxByte;
             addressPointer++;
-         }else if(addressPointer != 0xFF) { // Datenlänge empfangen
+         }else if(addressPointer != 0xFF) { // Datenlï¿½nge empfangen
             addressPointer = 0xFF;
             frameDataLength = rxByte;
-            if(frameDataLength > MAX_RX_FRAME_LENGTH) // Maximale Puffergöße checken.
+            if(frameDataLength > MAX_RX_FRAME_LENGTH) // Maximale Puffergï¿½ï¿½e checken.
             {
                 frameStatus &= ~FRAME_START;
                 hbwdebug(F("E: MsgTooLong\n"));
@@ -350,7 +355,7 @@ void HBWDevice::receive(){
             if(framePointer == frameDataLength) {  // Daten komplett
                if(crc16checksum == 0) {    //
             	  frameStatus &= ~FRAME_START;
-                  // Framedaten für die spätere Verarbeitung speichern
+                  // Framedaten fï¿½r die spï¿½tere Verarbeitung speichern
                   // TODO: Braucht man das wirklich?
                   frameControlByte = rxFrameControlByte;
                   frameDataLength -= 2;
@@ -435,19 +440,25 @@ void HBWDevice::processEvent(byte const * const frameData, byte frameDataLength,
          switch(frameData[0]) {
           case 'Z':                                            // end discovery mode
             pendingActions.zeroCommunicationActive = false;
+            zStartCounter = 0;
             break;
           case 'z':                                              // start discovery mode
-            pendingActions.zeroCommunicationActive = true;
+            // original modules still send ACK after receiving 'z' twice. They go completely silent after 4 (or 3?) 'z' messages
+            // not sure how that should work. Let's go silent after second start message
+            if (zStartCounter >= 1)  pendingActions.zeroCommunicationActive = true;
+            else  zStartCounter++;
             break;
           // case 'K':  // 0x4B Key-Event
-            // broadcast key events sind für long_press interressant
+            // broadcast key events sind fï¿½r long_press interressant
             //  if (frameDataLength == 4) {...}
 			// if (frameData[3] & 0x01) {    // long press broadcast only
               // receiveKeyEvent(senderAddress, frameData[1], frameData[2], frameData[3] >>2, true);
 			// }
             // break;
-        }
-        return;
+          default:
+            zStartCounter = 0;  // other broadcast, so reset
+         }
+         return;
       };
 
       if (pendingActions.zeroCommunicationActive) {				// block any messages in this state, except:
@@ -460,6 +471,7 @@ void HBWDevice::processEvent(byte const * const frameData, byte frameDataLength,
       #endif
          return;
       };
+      zStartCounter = 0;  // other message, so reset
 
       txFrame.targetAddress = senderAddress;
       // gibt es was zu verarbeiten -> Ja, die Kommunikationsschicht laesst nur Messages durch,
@@ -500,7 +512,7 @@ void HBWDevice::processEvent(byte const * const frameData, byte frameDataLength,
         	processEmessage(frameData);
             break;
          case 'K':                           // 0x4B Key-Event
-         case 0xCB:   // 'Ë':       // Key-Sim-Event TODO: Es gibt da einen theoretischen Unterschied
+         case 0xCB:   // 'ï¿½':       // Key-Sim-Event TODO: Es gibt da einen theoretischen Unterschied
             receiveKeyEvent(senderAddress, frameData[1], frameData[2], frameData[3] >>2, frameData[3] & 0x01);
             break;
          case 'R':                                                              // Read EEPROM
@@ -525,11 +537,13 @@ void HBWDevice::processEvent(byte const * const frameData, byte frameDataLength,
                hbwdebug(F("C: Write EEPROM\n"));
                adrStart = ((uint16_t)(frameData[1]) << 8) | frameData[2];  // start adress of eeprom
                for(byte i = 4; i < frameDataLength; i++){
-            	 writeEEPROM(adrStart+i-4, frameData[i]);
+                 // allow writing OWN_ADDRESS (E2END-3..E2END) via W command
+                 bool privileged = (adrStart+i-4 >= E2END-3);
+            	 writeEEPROM(adrStart+i-4, frameData[i], privileged);
                }
             };
             break;
-         /* case 'c':                                                               // Zieladresse löschen?
+         /* case 'c':                                                               // Zieladresse lï¿½schen?
             // TODO: ???
             break;  */
        #ifdef Support_HBWLink_InfoEvent
@@ -553,7 +567,7 @@ void HBWDevice::processEvent(byte const * const frameData, byte frameDataLength,
         	txFrame.dataLength = 10;
         	onlyAck = false;
         	break;
-         /* case 'q':                                                               // Zieladresse hinzufügen?
+         /* case 'q':                                                               // Zieladresse hinzufï¿½gen?
             // TODO: ???
         	break; */
          case 'v':                                                               // get firmware version
@@ -662,6 +676,7 @@ void HBWDevice::processEmessage(uint8_t const * const frameData) {
 
 // "Announce-Message" ueber broadcast senden
 uint8_t HBWDevice::broadcastAnnounce(byte channel) {
+   if (pendingActions.zeroCommunicationActive) return BUS_BUSY;	// don't send in zeroCommunication mode, return with "bus busy" instead
    txFrame.targetAddress = 0xFFFFFFFF;  // broadcast
    txFrame.controlByte = 0xF8;     // control byte
    txFrame.dataLength = 16;      // Length
@@ -672,8 +687,7 @@ uint8_t HBWDevice::broadcastAnnounce(byte channel) {
    txFrame.data[4] = firmware_version / 0x100;
    txFrame.data[5] = firmware_version & 0xFF;
    determineSerial(txFrame.data + 6, getOwnAddress());
-   // only send, if bus is free. Don't send in zeroCommunication mode, return with "bus busy" instead
-   return (pendingActions.zeroCommunicationActive ? BUS_BUSY : sendFrame(NEED_IDLE_BUS));
+   return sendFrame(NEED_IDLE_BUS);  // only if bus is free
 };
 
 
@@ -781,7 +795,7 @@ void HBWDevice::readAddressFromEEPROM(){
       address <<= 8;
       address |= EepromPtr->read(E2END - 3 + i);
    }
-   if(address == 0xFFFFFFFF)
+   if(address == 0xFFFFFFFF || address == 0x00000000)
       address = 0x42FFFFFF;
    setOwnAddress(address);
 };
@@ -793,7 +807,11 @@ void HBWDevice::determineSerial(uint8_t* buf, uint32_t address) {
    buf[1] = 'B';
    buf[2] = 'W';
    
-   // append last 7 digits of own address
+   // subtract base offset to get 7-digit serial number (OWN_ADDRESS range 1120000000-1129999999)
+   if (address >= 1120000000UL)
+      address -= 1120000000UL;
+
+   // append 7 digits
    uint8_t* pEnd = &buf[9];
    while (pEnd != &buf[2])
    {
@@ -827,8 +845,7 @@ uint32_t HBWDevice::getCentralAddress() {
 
 
 // EEPROM lesen
-void HBWDevice::readEEPROM(void* dst, uint16_t address, uint16_t length, 
-                           boolean lowByteFirst) {
+void HBWDevice::readEEPROM(void* dst, uint16_t address, uint16_t length, boolean lowByteFirst) {
    byte* ptr = (byte*)(dst);
    for(uint16_t offset = 0; offset < length; offset++) {
       *ptr = EepromPtr->read(address + (lowByteFirst ? length - 1 - offset : offset));
@@ -843,8 +860,77 @@ void HBWDevice::handleBroadcastAnnounce() {
    if(pendingActions.announced) return;
    // avoid sending broadcast in the first second
    if(millis() < 1000) return;
-   // send methods return 0 if everything is ok
-   pendingActions.announced = (broadcastAnnounce(0) == SUCCESS);
+   // store result as bool
+   pendingActions.announced = (broadcastAnnounce() == SUCCESS);
+}
+
+
+// ============================================================================
+// NEU (OpenCCU-KompatibilitÃ¤t): Discovery-Binary-Search Handler
+// ============================================================================
+// Die CCU fuehrt einen Binary-Search durch um Geraete zu finden:
+//   1. CCU sendet Frame mit partieller Zieladresse
+//   2. CTRL-Byte: (validBits-1) << 3 | 0x03
+//   3. Geraet prueft ob eigene Adresse mit dem Prefix matched
+//   4. Wenn ja: Geraet antwortet mit 1 Byte
+//   5. CCU verfeinert Suche bis vollstaendige 32-Bit Adresse gefunden
+//
+// Referenz: FHEM HM485_Protocol.pm (kc-GitHub/FHEM-HM485)
+// Siehe: https://github.com/kc-GitHub/FHEM-HM485/blob/master/FHEM/lib/HM485/HM485d/HM485_Protocol.pm
+// ============================================================================
+void HBWDevice::handleDiscoveryFrame(uint8_t ctrlByte, uint32_t prefix) {
+   // Discovery frames haben CTRL bits 1,0 = 11
+   // Zusaetzliche Pruefung fuer Sicherheit
+   if ((ctrlByte & 0x03) != 0x03) return;
+   
+   // Extract validBits (1-32)
+   // CTRL format: (validBits-1) << 3 | 0x03
+   uint8_t validBits = ((ctrlByte >> 3) & 0x1F) + 1;
+   if (validBits > 32) validBits = 32;
+   if (validBits < 1) validBits = 1;
+   
+   // Calculate mask for the valid bits (MSB first)
+   uint32_t mask;
+   if (validBits >= 32) {
+      mask = 0xFFFFFFFF;
+   } else {
+      mask = 0xFFFFFFFF << (32 - validBits);
+   }
+   
+   // Get own address
+   uint32_t myAddress = getOwnAddress();
+   
+   // Compare prefix bits with own address
+   if ((myAddress & mask) == (prefix & mask)) {
+      // Match! Send 1-byte response to indicate presence
+      // We don't use sendFrame() here because Discovery response
+      // is just a single byte, not a full frame
+      
+      // Small random delay to avoid collisions if multiple devices match
+      // (shouldn't happen with unique addresses, but just in case)
+      delayMicroseconds(random(0, 500));
+      
+      digitalWrite(txEnablePin, HIGH);
+      delayMicroseconds(50);  // RS485 transceiver setup time
+      serial->write(0x01);     // Response byte (any value works)
+      serial->flush();         // Wait for transmission complete
+      delayMicroseconds(50);
+      digitalWrite(txEnablePin, LOW);
+      
+      // Update lastReceivedTime to avoid false "bus idle" detection
+      lastReceivedTime = millis();
+      
+     #ifdef HBW_DEBUG
+      hbwdebug(F("DISC MATCH vb="));
+      hbwdebug(validBits);
+      hbwdebug(F(" pfx="));
+      hbwdebughex((prefix >> 24) & 0xFF);
+      hbwdebughex((prefix >> 16) & 0xFF);
+      hbwdebughex((prefix >> 8) & 0xFF);
+      hbwdebughex(prefix & 0xFF);
+      hbwdebug(F("\n"));
+     #endif
+   }
 }
 
 
@@ -928,6 +1014,7 @@ HBWDevice::HBWDevice(uint8_t _devicetype, uint8_t _hardware_version, uint16_t _f
    configPin = NOT_A_PIN;  //inactive by default
    configButtonStatus = 0;
    pendingActions.zeroCommunicationActive = false;	// will be activated by START_ZERO_COMMUNICATION = 'z' command
+   zStartCounter = 0;
    #ifdef Support_ModuleReset
    pendingActions.resetSystem = false;
    #endif
@@ -959,8 +1046,8 @@ void HBWDevice::setConfigPins(uint8_t _configPin, uint8_t _ledPin) {
 void HBWDevice::setStatusLEDPins(uint8_t _txLedPin, uint8_t _rxLedPin) {
 	txLedPin = _txLedPin;
 	rxLedPin = _rxLedPin;
-	if(txLedPin != NOT_A_PIN) pinMode(txLedPin, OUTPUT);
-	if(rxLedPin != NOT_A_PIN) pinMode(rxLedPin, OUTPUT);
+	pinMode(txLedPin, OUTPUT);  // pinMode() check for valid pin / NOT_A_PIN
+	pinMode(rxLedPin, OUTPUT);
 };
 
 #ifdef Support_HBWLink_InfoEvent
@@ -1010,14 +1097,23 @@ void HBWDevice::loop()
    #ifdef Support_WDT
    RESET_WATCHDOG();
    #endif
-  // Daten empfangen und alles, was zur Kommunikationsschicht gehört
+  // Daten empfangen und alles, was zur Kommunikationsschicht gehï¿½rt
   // processEvent vom Modul wird als Callback aufgerufen
   // Daten empfangen (tut nichts, wenn keine Daten vorhanden)
     receive();
     // Check
     if(frameComplete) {
   	  frameComplete = false;   // only once
-  	  if(targetAddress == ownAddress || targetAddress == 0xFFFFFFFF) {
+  	  
+  	  // NEU (OpenCCU-Kompatibilitaet): Discovery-Binary-Search Frame?
+  	  // Discovery Frames haben CTRL bits 1,0 = 11 und keine Payload.
+  	  // Wichtig: Wir pruefen NICHT auf ownAddress, da Discovery mit
+  	  // partiellen Adressen arbeitet (Binary Search)!
+  	  if((frameControlByte & 0x03) == 0x03 && frameDataLength == 0) {
+  	    handleDiscoveryFrame(frameControlByte, targetAddress);
+  	  }
+  	  // Normale Frames: Nur an eigene Adresse oder Broadcast
+  	  else if(targetAddress == ownAddress || targetAddress == 0xFFFFFFFF) {
   	    if(parseFrame()) {
   	      processEvent(frameData, frameDataLength, (targetAddress == 0xFFFFFFFF));
   	    };
@@ -1199,5 +1295,5 @@ void hbwdebughex(uint8_t b) {
    hbwdebugstream->print(b & 15, HEX);
 };
 #else
-void hbwdebughex(uint8_t b) { };
+void hbwdebughex(uint8_t) { };
 #endif
